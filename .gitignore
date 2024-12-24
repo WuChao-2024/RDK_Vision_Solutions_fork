@@ -1,0 +1,16 @@
+*__pycache__*
+*.ipynb_checkpoints*
+*.vscode*
+*.pt
+*pth
+*.onnx
+*.bin
+*.hbm
+*wuc_note*
+*.vscode*
+*build*
+*_result.jpg*
+*jupyter_result.jpg*
+*coco2017_image_result*
+
+resource/DataSets/*

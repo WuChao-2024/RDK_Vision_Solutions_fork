@@ -1,7 +1,6 @@
 
-![](imgs/RDK_Solution.jpg)
+![](imgs/FAQ.jpg)
 
 English| [简体中文](./README_cn.md)
 
-# RDK Solutions
 
