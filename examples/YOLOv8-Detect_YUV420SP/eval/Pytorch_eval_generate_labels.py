@@ -14,10 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# 注意: 此程序在RDK板端运行
-# Attention: This program runs on RDK board.
-
-from examples.YOLOv8_YUV420SP.YOLOv8_Detect import *
+from ultralytics import YOLO
 
 import json
 
@@ -37,31 +34,25 @@ logger = logging.getLogger("RDK_YOLO")
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model-path', type=str, default='models/yolov8n_detect_bayese_640x640_nv12_mix_modified.bin', 
-                        help="""Path to BPU Quantized *.bin Model.
-                                RDK X3(Module): Bernoulli2.
-                                RDK Ultra: Bayes.
-                                RDK X5(Module): Bayes-e.
-                                RDK S100: Nash-e.
-                                RDK S100P: Nash-m.""") 
+    parser.add_argument('--model-path', type=str, default='../pt/YOLOv8/detect_weights/yolov8s.pt', 
+                        help="""Path to ONNX Model.""") 
     parser.add_argument('--classes-num', type=int, default=80, help='Classes Num to Detect.')
     parser.add_argument('--reg', type=int, default=16, help='DFL reg layer.')
     parser.add_argument('--nms-thres', type=float, default=0.7, help='IoU threshold.')
     parser.add_argument('--score-thres', type=float, default=0.25, help='confidence threshold.')
-    parser.add_argument('--image-path', type=str, default="../../../resource/DataSets/val2017", help='COCO2017 val source image path.')
+    parser.add_argument('--image-path', type=str, default="../val2017", help='COCO2017 val source image path.')
     parser.add_argument('--result-image-dump', type=bool, default=False, help='dump image result or not')
     parser.add_argument('--result-image-path', type=str, default="coco2017_image_result", help='COCO2017 val image result saving path.')
-    parser.add_argument('--json-path', type=str, default="yolov8n_detect_bayese_640x640_nv12_mix_modified_coco2017_val_pridect.json", help='convert to json save path.')
-    parser.add_argument('--max-num', type=int, default=50000, help='max num of images which will be precessed.')
+    parser.add_argument('--json-path', type=str, default="yolov8s_detect_pt_coco2017_val_pridect.json", help='convert to json save path.')
+    parser.add_argument('--max-num', type=int, default=500000, help='max num of images which will be precessed.')
     opt = parser.parse_args()
     logger.info(opt)
 
     # id -> coco_id
     coco_id = [1,2,3,4,5,6,7,8,9,10,11,13,14,15,16,17,18,19,20,21,22,23,24,25,27,28,31,32,33,34,35,36,37,38,39,40,41,42,43,44,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,51,62,63,64,65,67,70,72,73,74,75,76,77,78,79,80,81,82,84,85,86,87,88,89,90]
 
-
     # 实例化
-    model = YOLOv8_Detect(opt)
+    model = YOLO(opt.model_path)
 
     # 创建 result* 目录存储结果
     if opt.result_image_dump:
@@ -87,22 +78,15 @@ def main():
 
         logger.info("\033[1;32m" + f"[{cnt}/{img_num}] Processing image: \"{img_name}\"" + "\033[0m")
         # 端到端推理
-        img = cv2.imread(os.path.join(opt.image_path, img_name))
-        input_tensor = model.preprocess(img)
-        outputs = model.c2numpy(model.forward(input_tensor))
-        results = model.postProcess(outputs)
-        # 渲染结果并保存
-        if opt.result_image_dump:
-            logger.info("\033[1;32m" + "Draw Results: " + "\033[0m")
-            for class_id, score, x1, y1, x2, y2 in results:
-                logger.info("(%d, %d, %d, %d) -> %s: %.2f"%(x1,y1,x2,y2, coco_names[class_id], score))
-                draw_detection(img, (x1, y1, x2, y2), score, class_id)
-                save_path = os.path.join(result_image_path, img_name[:-4] + "_result.jpg")
-                cv2.imwrite(save_path, img)
-                logger.info("\033[1;32m" + f"result image saved: \"./{save_path}\"" + "\033[0m")
+        results = model([os.path.join(opt.image_path, img_name)], conf=opt.score_thres, iou=opt.nms_thres)
+        img = results[0].orig_img
+        # 保存到JSON
         id_cnt = 0
-        for class_id, score, x1, y1, x2, y2 in results:
-            # logger.info("(%d, %d, %d, %d) -> %s: %.2f"%(x1,y1,x2,y2, coco_names[class_id], score))
+        for i in range(len(results[0].boxes.cls)):
+            class_id, score, xyxy = results[0].boxes.cls[i], results[0].boxes.conf[i], results[0].boxes.xyxy[i]
+            class_id = int(class_id)
+            score = float(score)
+            x1, x2, y1, y2 = int(xyxy[0]), int(xyxy[2]), int(xyxy[1]), int(xyxy[3])
             width = max(0, x2 - x1)
             height = max(0, y2 - y1)
             x1, y1, x2, y2, width, height = float(x1), float(y1), float(x2), float(y2), float(width), float(height)

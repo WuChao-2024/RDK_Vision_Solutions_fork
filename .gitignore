@@ -12,5 +12,6 @@
 *_result.jpg*
 *jupyter_result.jpg*
 *coco2017_image_result*
+*coco2017_val_pridect.json
 
-resource/DataSets/*
+datasets/COCO2017/val2017/*

@@ -4,9 +4,9 @@ import subprocess
 
 
 
-RED_BEGIN = ""
-GREEN_BEGIN = ""
-COLOR_END = ""
+RED_BEGIN = "\033[1;31m"
+GREEN_BEGIN = "\033[1;32m"
+COLOR_END = "\033[0m"
 
 def main():
     # 参数
@@ -34,33 +34,48 @@ def main():
     # 获取当前的目标目录文件
     file_names = os.listdir(opt.file)
 
-    # 获取所有*.bin文件对应的文件大小，并排序
-    bin_file_num = 0
-    for file_name in file_names:
-        if file_name 
+    # TODO: 获取所有*.bin文件对应的文件大小，并排序
+
 
     # 输出hrut_somstatus的信息
-    print("hrut_somstatus")
+    print(RED_BEGIN + "hrut_somstatus" + COLOR_END)
 
-    # 输出所有*.bin文件的名称和大小
-
+    # TODO: 输出所有*.bin文件的名称和大小
     # 开始逐个perf
-
+    for file_name in file_names:
+        if not file_name.endswith(".bin"):
+            continue
+        print(GREEN_BEGIN + "Model: %s"%file_name + COLOR_END)
+        for i in range(opt.max):
+            result_str = get_perf_data(os.path.join(opt.file, file_name), i+1)
+            print(result_str, end=" ", flush=True)
+            if i+1 != opt.max:
+                print("<br/>", end=" ", flush=True)
+        print("\n")
+    
+    # TODO
     ## 输出perf进度
     ## 输出CPU温度
-   # /sys/class/hwmon/hwmon0
-    
-
+    # /sys/class/hwmon/hwmon0
     ## 输出perf的耗时和总耗时
-
     ## 输出perf结果
-    pass
-
-
 
 def get_perf_data(model_file, thread_num):
     cmd = "hrt_model_exec perf --model_file %s --thread_num %s"%(model_file, thread_num)
-    msg = os.system(cmd)
+    # print(cmd)
+    result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=500).stdout
+    output_lines = result.splitlines()
+    latency, fps = 0, 0
+    for line in output_lines:
+        if "Average    latency    is:" in line:
+            latency = float(line.split("Average    latency    is: ")[-1].split(" ms")[0])
+        elif "Frame      rate       is:" in line:
+            fps = float(line.split("Frame      rate       is: ")[-1].split(" FPS")[0])
+    if thread_num == 1:
+        result_str = "%.1f ms / %.1f FPS (%d thread  )"%(latency, fps, thread_num)
+    else:
+        result_str = "%.1f ms / %.1f FPS (%d threads)"%(latency, fps, thread_num)
+    return result_str
 
 if __name__ == "__main__":
     main()

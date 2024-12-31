@@ -21,12 +21,12 @@ limitations under the License.
 
 // D-Robotics *.bin 模型路径
 // Path of D-Robotics *.bin model.
-#define MODEL_PATH "../../models/yolov8n_detect_bayese_640x640_nv12_modified.bin"
+#define MODEL_PATH "../../ptq_models/yolov8n_detect_bayese_640x640_nv12_modified.bin"
 
 // 推理使用的测试图片路径
 // Path of the test image used for inference.
-#define TESR_IMG_PATH "../../../../../resource/assets/kite.jpg"
-// #define TESR_IMG_PATH "../../../../../resource/assets/bus.jpg"
+#define TESR_IMG_PATH "../../../../datasets/COCO2017/assets/kite.jpg"
+// #define TESR_IMG_PATH "../../../../datasets/COCO2017/assets/bus.jpg"
 
 // 前处理方式选择, 0:Resize, 1:LetterBox
 // Preprocessing method selection, 0: Resize, 1: LetterBox
@@ -44,7 +44,7 @@ limitations under the License.
 
 // NMS的阈值, 默认0.45
 // Non-Maximum Suppression (NMS) threshold, default is 0.45
-#define NMS_THRESHOLD 0.45
+#define NMS_THRESHOLD 0.7
 
 // 分数阈值, 默认0.25
 // Score threshold, default is 0.25
@@ -253,12 +253,12 @@ int main()
     int32_t W_16 = input_W / 16;
     int32_t W_32 = input_W / 32;
     int32_t order_we_want[6][3] = {
-        {H_8, W_8, 64},            // output[order[0]]: (1, H // 8,  W // 8,  64)
-        {H_16, W_16, 64},          // output[order[1]]: (1, H // 16, W // 16, 64)
-        {H_32, W_32, 64},          // output[order[2]]: (1, H // 32, W // 32, 64)
         {H_8, W_8, CLASSES_NUM},   // output[order[3]]: (1, H // 8,  W // 8,  CLASSES_NUM)
+        {H_8, W_8, 64},            // output[order[0]]: (1, H // 8,  W // 8,  64)
         {H_16, W_16, CLASSES_NUM}, // output[order[4]]: (1, H // 16, W // 16, CLASSES_NUM)
+        {H_16, W_16, 64},          // output[order[1]]: (1, H // 16, W // 16, 64)
         {H_32, W_32, CLASSES_NUM}, // output[order[5]]: (1, H // 32, W // 32, CLASSES_NUM)
+        {H_32, W_32, 64},          // output[order[2]]: (1, H // 32, W // 32, 64)
     };
     for (int i = 0; i < 6; i++)
     {
@@ -396,6 +396,7 @@ int main()
     hbDNNTensor input;
     input.properties = input_properties;
     hbSysAllocCachedMem(&input.sysMem[0], int(3 * input_H * input_W / 2));
+    
     memcpy(input.sysMem[0].virAddr, ynv12, int(3 * input_H * input_W / 2));
     hbSysFlushMem(&input.sysMem[0], HB_SYS_MEM_CACHE_CLEAN);
 
@@ -433,32 +434,32 @@ int main()
 
     // 7.1 小目标特征图
     // 7.1 Small Object Feature Map
-    // output[order[0]]: (1, H // 8,  W // 8,  4 * REG)
-    // output[order[3]]: (1, H // 8,  W // 8,  CLASSES_NUM)
+    // output[order[0]]: (1, H // 8,  W // 8,  CLASSES_NUM)
+    // output[order[1]]: (1, H // 8,  W // 8,  4 * REG)
 
     // 7.1.1 检查反量化类型是否符合RDK Model Zoo的README导出的bin模型规范
     // 7.1.1 Check if the dequantization type complies with the bin model specification exported in the RDK Model Zoo README.
-    if (output[order[0]].properties.quantiType != SCALE)
+    if (output[order[0]].properties.quantiType != NONE)
     {
-        std::cout << "output[order[0]] QuantiType is not SCALE, please check!" << std::endl;
+        std::cout << "output[order[1]] QuantiType is not NONE, please check!" << std::endl;
         return -1;
     }
-    if (output[order[3]].properties.quantiType != NONE)
+    if (output[order[1]].properties.quantiType != SCALE)
     {
-        std::cout << "output[order[3]] QuantiType is not NONE, please check!" << std::endl;
+        std::cout << "output[order[0]] QuantiType is not SCALE, please check!" << std::endl;
         return -1;
     }
 
     // 7.1.2 对缓存的BPU内存进行刷新
     // 7.1.2 Flush the cached BPU memory
     hbSysFlushMem(&(output[order[0]].sysMem[0]), HB_SYS_MEM_CACHE_INVALIDATE);
-    hbSysFlushMem(&(output[order[3]].sysMem[0]), HB_SYS_MEM_CACHE_INVALIDATE);
+    hbSysFlushMem(&(output[order[1]].sysMem[0]), HB_SYS_MEM_CACHE_INVALIDATE);
 
     // 7.1.3 将BPU推理完的内存地址转换为对应类型的指针
     // 7.1.3 Convert the memory address of BPU inference to a pointer of the corresponding type
-    auto *s_bbox_raw = reinterpret_cast<int32_t *>(output[order[0]].sysMem[0].virAddr);
-    auto *s_bbox_scale = reinterpret_cast<float *>(output[order[0]].properties.scale.scaleData);
-    auto *s_cls_raw = reinterpret_cast<float *>(output[order[3]].sysMem[0].virAddr);
+    auto *s_cls_raw = reinterpret_cast<float *>(output[order[0]].sysMem[0].virAddr);
+    auto *s_bbox_raw = reinterpret_cast<int32_t *>(output[order[1]].sysMem[0].virAddr);
+    auto *s_bbox_scale = reinterpret_cast<float *>(output[order[1]].properties.scale.scaleData);
     for (int h = 0; h < H_8; h++)
     {
         for (int w = 0; w < W_8; w++)
@@ -471,8 +472,6 @@ int main()
             // bbox corresponds to the raw values of 4 coordinates multiplied by REG, which are the values before DFL calculation. This part of the calculation is only performed if the score is qualified.
             float *cur_s_cls_raw = s_cls_raw;
             int32_t *cur_s_bbox_raw = s_bbox_raw;
-            s_cls_raw += CLASSES_NUM;
-            s_bbox_raw += REG * 4;
 
             // 7.1.5 找到分数的最大值索引, 如果最大值小于阈值，则舍去
             // 7.1.5 Find the index of the maximum score value and discard if the maximum value is less than the threshold
@@ -489,6 +488,8 @@ int main()
             // 7.1.6 If not qualified, skip to avoid unnecessary dequantization, DFL and dist2bbox calculation
             if (cur_s_cls_raw[cls_id] < CONF_THRES_RAW)
             {
+                s_cls_raw += CLASSES_NUM;
+                s_bbox_raw += REG * 4;
                 continue;
             }
 
@@ -505,7 +506,8 @@ int main()
                 sum = 0.;
                 for (int j = 0; j < REG; j++)
                 {
-                    dfl = std::exp(float(cur_s_bbox_raw[REG * i + j]) * s_bbox_scale[j]);
+                    int index_id = REG * i + j;
+                    dfl = std::exp(float(cur_s_bbox_raw[index_id]) * s_bbox_scale[index_id]);
                     ltrb[i] += dfl * j;
                     sum += dfl;
                 }
@@ -516,6 +518,8 @@ int main()
             // 7.1.9 Remove unqualified boxes
             if (ltrb[2] + ltrb[0] <= 0 || ltrb[3] + ltrb[1] <= 0)
             {
+                s_cls_raw += CLASSES_NUM;
+                s_bbox_raw += REG * 4;
                 continue;
             }
 
@@ -529,37 +533,40 @@ int main()
             // 7.1.11 Add the corresponding class to the corresponding std::vector.
             bboxes[cls_id].push_back(cv::Rect2d(x1, y1, x2 - x1, y2 - y1));
             scores[cls_id].push_back(score);
+
+            s_cls_raw += CLASSES_NUM;
+            s_bbox_raw += REG * 4;
         }
     }
 
     // 7.2 中目标特征图
     // 7.2 Media Object Feature Map
-    // output[order[1]]: (1, H // 16,  W // 16,  4 * REG)
-    // output[order[4]]: (1, H // 16,  W // 16,  CLASSES_NUM)
+    // output[order[2]]: (1, H // 16,  W // 16,  CLASSES_NUM)
+    // output[order[3]]: (1, H // 16,  W // 16,  4 * REG)
 
     // 7.2.1 检查反量化类型是否符合RDK Model Zoo的README导出的bin模型规范
     // 7.2.1 Check if the dequantization type complies with the bin model specification exported in the RDK Model Zoo README.
-    if (output[order[1]].properties.quantiType != SCALE)
-    {
-        std::cout << "output[order[1]] QuantiType is not SCALE, please check!" << std::endl;
-        return -1;
-    }
-    if (output[order[4]].properties.quantiType != NONE)
+    if (output[order[2]].properties.quantiType != NONE)
     {
         std::cout << "output[order[4]] QuantiType is not NONE, please check!" << std::endl;
+        return -1;
+    }
+    if (output[order[3]].properties.quantiType != SCALE)
+    {
+        std::cout << "output[order[1]] QuantiType is not SCALE, please check!" << std::endl;
         return -1;
     }
 
     // 7.2.2 对缓存的BPU内存进行刷新
     // 7.2.2 Flush the cached BPU memory
-    hbSysFlushMem(&(output[order[1]].sysMem[0]), HB_SYS_MEM_CACHE_INVALIDATE);
-    hbSysFlushMem(&(output[order[4]].sysMem[0]), HB_SYS_MEM_CACHE_INVALIDATE);
+    hbSysFlushMem(&(output[order[2]].sysMem[0]), HB_SYS_MEM_CACHE_INVALIDATE);
+    hbSysFlushMem(&(output[order[3]].sysMem[0]), HB_SYS_MEM_CACHE_INVALIDATE);
 
     // 7.2.3 将BPU推理完的内存地址转换为对应类型的指针
     // 7.2.3 Convert the memory address of BPU inference to a pointer of the corresponding type
-    auto *m_bbox_raw = reinterpret_cast<int32_t *>(output[order[1]].sysMem[0].virAddr);
-    auto *m_bbox_scale = reinterpret_cast<float *>(output[order[1]].properties.scale.scaleData);
-    auto *m_cls_raw = reinterpret_cast<float *>(output[order[4]].sysMem[0].virAddr);
+    auto *m_cls_raw = reinterpret_cast<float *>(output[order[2]].sysMem[0].virAddr);
+    auto *m_bbox_raw = reinterpret_cast<int32_t *>(output[order[3]].sysMem[0].virAddr);
+    auto *m_bbox_scale = reinterpret_cast<float *>(output[order[3]].properties.scale.scaleData);
     for (int h = 0; h < H_16; h++)
     {
         for (int w = 0; w < W_16; w++)
@@ -572,8 +579,6 @@ int main()
             // bbox corresponds to the raw values of 4 coordinates multiplied by REG, which are the values before DFL calculation. This part of the calculation is only performed if the score is qualified.
             float *cur_m_cls_raw = m_cls_raw;
             int32_t *cur_m_bbox_raw = m_bbox_raw;
-            m_cls_raw += CLASSES_NUM;
-            m_bbox_raw += REG * 4;
 
             // 7.2.5 找到分数的最大值索引, 如果最大值小于阈值，则舍去
             // 7.2.5 Find the index of the maximum score value and discard if the maximum value is less than the threshold
@@ -588,7 +593,11 @@ int main()
             // 7.2.6 不合格则直接跳过, 避免无用的反量化, DFL和dist2bbox计算
             // 7.2.6 If not qualified, skip to avoid unnecessary dequantization, DFL and dist2bbox calculation
             if (cur_m_cls_raw[cls_id] < CONF_THRES_RAW)
+            {
+                m_cls_raw += CLASSES_NUM;
+                m_bbox_raw += REG * 4;
                 continue;
+            }
 
             // 7.2.7 计算这个目标的分数
             // 7.2.7 Calculate the score of the target
@@ -603,7 +612,8 @@ int main()
                 sum = 0.;
                 for (int j = 0; j < REG; j++)
                 {
-                    dfl = std::exp(float(cur_m_bbox_raw[REG * i + j]) * m_bbox_scale[j]);
+                    int index_id = REG * i + j;
+                    dfl = std::exp(float(cur_m_bbox_raw[index_id]) * m_bbox_scale[index_id]);
                     ltrb[i] += dfl * j;
                     sum += dfl;
                 }
@@ -614,6 +624,8 @@ int main()
             // 7.2.9 Remove unqualified boxes
             if (ltrb[2] + ltrb[0] <= 0 || ltrb[3] + ltrb[1] <= 0)
             {
+                m_cls_raw += CLASSES_NUM;
+                m_bbox_raw += REG * 4;
                 continue;
             }
 
@@ -627,37 +639,40 @@ int main()
             // 7.2.11 Add the corresponding class to the corresponding std::vector.
             bboxes[cls_id].push_back(cv::Rect2d(x1, y1, x2 - x1, y2 - y1));
             scores[cls_id].push_back(score);
+
+            m_cls_raw += CLASSES_NUM;
+            m_bbox_raw += REG * 4;
         }
     }
 
     // 7.3 大目标特征图
     // 7.3 Big Object Feature Map
-    // output[order[2]]: (1, H // 32,  W // 32,  4 * REG)
-    // output[order[5]]: (1, H // 32,  W // 32,  CLASSES_NUM)
+    // output[order[4]]: (1, H // 32,  W // 32,  CLASSES_NUM)
+    // output[order[5]]: (1, H // 32,  W // 32,  4 * REG)
 
     // 7.3.1 检查反量化类型是否符合RDK Model Zoo的README导出的bin模型规范
     // 7.3.1 Check if the dequantization type complies with the bin model specification exported in the RDK Model Zoo README.
-    if (output[order[2]].properties.quantiType != SCALE)
+    if (output[order[4]].properties.quantiType != NONE)
     {
-        std::cout << "output[order[0]] QuantiType is not SCALE, please check!" << std::endl;
+        std::cout << "output[order[4]] QuantiType is not NONE, please check!" << std::endl;
         return -1;
     }
-    if (output[order[5]].properties.quantiType != NONE)
+    if (output[order[5]].properties.quantiType != SCALE)
     {
-        std::cout << "output[order[3]] QuantiType is not NONE, please check!" << std::endl;
+        std::cout << "output[order[5]] QuantiType is not SCALE, please check!" << std::endl;
         return -1;
     }
 
     // 7.3.2 对缓存的BPU内存进行刷新
     // 7.3.2 Flush the cached BPU memory
-    hbSysFlushMem(&(output[order[2]].sysMem[0]), HB_SYS_MEM_CACHE_INVALIDATE);
+    hbSysFlushMem(&(output[order[4]].sysMem[0]), HB_SYS_MEM_CACHE_INVALIDATE);
     hbSysFlushMem(&(output[order[5]].sysMem[0]), HB_SYS_MEM_CACHE_INVALIDATE);
 
     // 7.3.3 将BPU推理完的内存地址转换为对应类型的指针
     // 7.3.3 Convert the memory address of BPU inference to a pointer of the corresponding type
-    auto *l_bbox_raw = reinterpret_cast<int32_t *>(output[order[2]].sysMem[0].virAddr);
-    auto *l_bbox_scale = reinterpret_cast<float *>(output[order[2]].properties.scale.scaleData);
-    auto *l_cls_raw = reinterpret_cast<float *>(output[order[5]].sysMem[0].virAddr);
+    auto *l_cls_raw = reinterpret_cast<float *>(output[order[4]].sysMem[0].virAddr);
+    auto *l_bbox_raw = reinterpret_cast<int32_t *>(output[order[5]].sysMem[0].virAddr);
+    auto *l_bbox_scale = reinterpret_cast<float *>(output[order[5]].properties.scale.scaleData);
     for (int h = 0; h < H_32; h++)
     {
         for (int w = 0; w < W_32; w++)
@@ -670,8 +685,6 @@ int main()
             // bbox corresponds to the raw values of 4 coordinates multiplied by REG, which are the values before DFL calculation. This part of the calculation is only performed if the score is qualified.
             float *cur_l_cls_raw = l_cls_raw;
             int32_t *cur_l_bbox_raw = l_bbox_raw;
-            l_cls_raw += CLASSES_NUM;
-            l_bbox_raw += REG * 4;
 
             // 7.3.5 找到分数的最大值索引, 如果最大值小于阈值，则舍去
             // 7.3.5 Find the index of the maximum score value and discard if the maximum value is less than the threshold
@@ -687,7 +700,11 @@ int main()
             // 7.3.6 不合格则直接跳过, 避免无用的反量化, DFL和dist2bbox计算
             // 7.3.6 If not qualified, skip to avoid unnecessary dequantization, DFL and dist2bbox calculation
             if (cur_l_cls_raw[cls_id] < CONF_THRES_RAW)
+            {
+                l_cls_raw += CLASSES_NUM;
+                l_bbox_raw += REG * 4;
                 continue;
+            }
 
             // 7.3.7 计算这个目标的分数
             // 7.3.7 Calculate the score of the target
@@ -702,7 +719,8 @@ int main()
                 sum = 0.;
                 for (int j = 0; j < REG; j++)
                 {
-                    dfl = std::exp(float(cur_l_bbox_raw[REG * i + j]) * l_bbox_scale[j]);
+                    int index_id = REG * i + j;
+                    dfl = std::exp(float(cur_l_bbox_raw[index_id]) * l_bbox_scale[index_id]);
                     ltrb[i] += dfl * j;
                     sum += dfl;
                 }
@@ -713,6 +731,8 @@ int main()
             // 7.3.9 Remove unqualified boxes
             if (ltrb[2] + ltrb[0] <= 0 || ltrb[3] + ltrb[1] <= 0)
             {
+                l_cls_raw += CLASSES_NUM;
+                l_bbox_raw += REG * 4;
                 continue;
             }
 
@@ -726,6 +746,9 @@ int main()
             // 7.3.11 Add the corresponding class to the corresponding std::vector.
             bboxes[cls_id].push_back(cv::Rect2d(x1, y1, x2 - x1, y2 - y1));
             scores[cls_id].push_back(score);
+
+            l_cls_raw += CLASSES_NUM;
+            l_bbox_raw += REG * 4;
         }
     }
 
@@ -774,7 +797,7 @@ int main()
 
     // 9. 保存
     // 9. Save
-    cv::imwrite("cpp_result.jpg", img);
+    cv::imwrite(IMG_SAVE_PATH, img);
 
     // 10. 释放任务
     // 10. Release task
