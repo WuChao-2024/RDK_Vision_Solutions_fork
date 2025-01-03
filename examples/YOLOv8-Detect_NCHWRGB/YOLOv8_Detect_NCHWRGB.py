@@ -37,7 +37,7 @@ logger = logging.getLogger("RDK_YOLO")
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model-path', type=str, default='ptq_models/yolov8n_detect_bayese_640x640_nv12_modified.bin', 
+    parser.add_argument('--model-path', type=str, default='ptq_models/yolov8n_detect_bayese_640x640_nchwrgb_modified.bin', 
                         help="""Path to BPU Quantized *.bin Model.
                                 RDK X3(Module): Bernoulli2.
                                 RDK Ultra: Bayes.
@@ -58,7 +58,7 @@ def main():
     # 读图
     img = cv2.imread(opt.test_img)
     # 准备输入数据
-    input_tensor = model.preprocess(img)
+    input_tensor = model.preprocess_nchwrgb(img)
     # 推理
     outputs = model.c2numpy(model.forward(input_tensor))
     # 后处理
@@ -133,7 +133,7 @@ class YOLOv8_Detect():
         self.CLASSES_NUM = opt.classes_num
         print(f"{self.CLASSES_NUM = }")
 
-    def preprocess(self, img):
+    def preprocess_nchwrgb(self, img):
         RESIZE_TYPE = 0
         LETTERBOX_TYPE = 1
         PREPROCESS_TYPE = LETTERBOX_TYPE
@@ -145,6 +145,8 @@ class YOLOv8_Detect():
             # 利用resize的方式进行前处理, 准备nv12的输入数据
             begin_time = time()
             input_tensor = cv2.resize(img, (self.input_W, self.input_H), interpolation=cv2.INTER_NEAREST) # 利用resize重新开辟内存节约一次
+            
+            
             input_tensor = self.bgr2nv12(input_tensor)
             self.y_scale = 1.0 * self.input_H / self.img_h
             self.x_scale = 1.0 * self.input_W / self.img_w
@@ -170,7 +172,13 @@ class YOLOv8_Detect():
             
             input_tensor = cv2.resize(img, (new_w, new_h))
             input_tensor = cv2.copyMakeBorder(input_tensor, self.y_shift, y_other, self.x_shift, x_other, cv2.BORDER_CONSTANT, value=[127, 127, 127])
-            input_tensor = self.bgr2nv12(input_tensor)
+            
+            input_tensor = cv2.cvtColor(input_tensor, cv2.COLOR_BGR2RGB)
+            # input_tensor = np.array(input_tensor) / 255.0  # yaml文件中已经配置前处理
+            input_tensor = np.transpose(input_tensor, (2, 0, 1))
+            input_tensor = np.expand_dims(input_tensor, axis=0)
+            input_tensor = (input_tensor - 128).astype(np.int8)  # NCHW
+            
             logger.info("\033[1;31m" + f"pre process(letter box) time = {1000*(time() - begin_time):.2f} ms" + "\033[0m")
         else:
             logger.error(f"illegal PREPROCESS_TYPE = {PREPROCESS_TYPE}")

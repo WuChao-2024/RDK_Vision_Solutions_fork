@@ -21,7 +21,7 @@ limitations under the License.
 
 // D-Robotics *.bin 模型路径
 // Path of D-Robotics *.bin model.
-#define MODEL_PATH "../../ptq_models/yolov8n_detect_bayese_640x640_nv12_modified.bin"
+#define MODEL_PATH "../../ptq_models/yolov8n_detect_bayese_640x640_nchwrgb_modified.bin"
 
 // 推理使用的测试图片路径
 // Path of the test image used for inference.
@@ -167,18 +167,19 @@ int main()
 
     // 2.3.2 D-Robotics YOLOv8 *.bin 模型输入Tensor类型应为nv12
     // tensor type: HB_DNN_IMG_TYPE_NV12
-    if (input_properties.tensorType == HB_DNN_IMG_TYPE_NV12)
+    if (input_properties.tensorType == HB_DNN_IMG_TYPE_RGB)
     {
-        std::cout << "input tensor type: HB_DNN_IMG_TYPE_NV12" << std::endl;
+        std::cout << "input tensor type: HB_DNN_IMG_TYPE_RGB" << std::endl;
     }
     else
     {
-        std::cout << "input tensor type is not HB_DNN_IMG_TYPE_NV12, please check!" << std::endl;
+        std::cout << "input tensor type is not HB_DNN_IMG_TYPE_RGB, please check!" << std::endl;
         return -1;
     }
 
     // 2.3.3 D-Robotics YOLOv8 *.bin 模型输入Tensor数据排布应为NCHW
     // tensor layout: HB_DNN_LAYOUT_NCHW
+    std::cout << "input_properties.tensorType: " << input_properties.tensorType << std::endl;
     if (input_properties.tensorLayout == HB_DNN_LAYOUT_NCHW)
     {
         std::cout << "input tensor layout: HB_DNN_LAYOUT_NCHW" << std::endl;
@@ -344,6 +345,7 @@ int main()
         cv::Size targetSize(new_w, new_h);
         cv::resize(img, resize_img, targetSize);
         cv::copyMakeBorder(resize_img, resize_img, y_shift, y_other, x_shift, x_other, cv::BORDER_CONSTANT, cv::Scalar(127, 127, 127));
+        // cv::cvtColor(resize_img, resize_img, cv::COLOR_BGR2RGB);
 
         std::cout << "\033[31m pre process (LetterBox) time = " << std::fixed << std::setprecision(2) << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now() - begin_time).count() / 1000.0 << " ms\033[0m" << std::endl;
     }
@@ -353,6 +355,7 @@ int main()
 
         cv::Size targetSize(input_W, input_H);
         cv::resize(img, resize_img, targetSize);
+        // cv::cvtColor(resize_img, resize_img, cv::COLOR_BGR2RGB);
 
         y_scale = 1.0 * input_H / img.rows;
         x_scale = 1.0 * input_W / img.cols;
@@ -366,38 +369,33 @@ int main()
     std::cout << "y_shift = " << y_shift << ", ";
     std::cout << "x_shift = " << x_shift << std::endl;
 
-    // 3.3 cv::Mat的BGR888格式转为YUV420SP格式
-    // 3.3 Convert BGR888 to YUV420SP
-    begin_time = std::chrono::system_clock::now();
-    cv::Mat img_nv12;
-    cv::Mat yuv_mat;
-    cv::cvtColor(resize_img, yuv_mat, cv::COLOR_BGR2YUV_I420);
-    uint8_t *yuv = yuv_mat.ptr<uint8_t>();
-    img_nv12 = cv::Mat(input_H * 3 / 2, input_W, CV_8UC1);
-    uint8_t *ynv12 = img_nv12.ptr<uint8_t>();
-    int uv_height = input_H / 2;
-    int uv_width = input_W / 2;
-    int y_size = input_H * input_W;
-    memcpy(ynv12, yuv, y_size);
-    uint8_t *nv12 = ynv12 + y_size;
-    uint8_t *u_data = yuv + y_size;
-    uint8_t *v_data = u_data + uv_height * uv_width;
-    for (int i = 0; i < uv_width * uv_height; i++)
-    {
-        *nv12++ = *u_data++;
-        *nv12++ = *v_data++;
-    }
-    std::cout << "\033[31m bgr8 to nv12 time = " << std::fixed << std::setprecision(2) << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now() - begin_time).count() / 1000.0 << " ms\033[0m" << std::endl;
-
-    begin_time = std::chrono::system_clock::now();
-
-    // 3.4 将准备好的输入数据放入hbDNNTensor
-    // 3.4 Put input data into hbDNNTensor
+    // 3.3 准备输入数据的hbDNNTensor内存空间
+    // 3.3 Prepare the memory space of hbDNNTensor for input data.
     hbDNNTensor input;
     input.properties = input_properties;
-    hbSysAllocCachedMem(&input.sysMem[0], int(3 * input_H * input_W / 2));
-    
-    memcpy(input.sysMem[0].virAddr, ynv12, int(3 * input_H * input_W / 2));
+    hbSysAllocCachedMem(&input.sysMem[0], int(3 * input_H * input_W));
+
+    // 3.4 cv::Mat的NHWC-BGR888格式转为NCHW-RGB888格式
+    // 3.4 Convert NHWC-BGR888 to NCHW-RGB888
+    begin_time = std::chrono::system_clock::now();
+    uint8_t *data_u8{reinterpret_cast<uint8_t *>(resize_img.ptr<uint8_t>())};
+    int8_t *data_s8{reinterpret_cast<int8_t *>(input.sysMem[0].virAddr)};
+
+    for (int h = 0; h < input_H; h++)
+    {
+        for (int w = 0; w < input_W; w++)
+        {
+            // BGR 到 RGB 的通道顺序转换，同时进行减均值操作 (-128)
+            data_s8[(0 * input_H * input_W) + h * input_W + w] = static_cast<int8_t>(data_u8[h * input_W * 3 + w * 3 + 2] - 128); // R
+            data_s8[(1 * input_H * input_W) + h * input_W + w] = static_cast<int8_t>(data_u8[h * input_W * 3 + w * 3 + 1] - 128); // G
+            data_s8[(2 * input_H * input_W) + h * input_W + w] = static_cast<int8_t>(data_u8[h * input_W * 3 + w * 3 + 0] - 128); // B
+        }
+    }
+
+    std::cout << "\033[31m (u8-128)->s8 time = " << std::fixed << std::setprecision(2) << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now() - begin_time).count() / 1000.0 << " ms\033[0m" << std::endl;
+
+    begin_time = std::chrono::system_clock::now();
+
     hbSysFlushMem(&input.sysMem[0], HB_SYS_MEM_CACHE_CLEAN);
 
     // 4. 准备模型输出数据的空间
